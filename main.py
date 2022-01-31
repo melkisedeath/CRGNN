@@ -9,7 +9,10 @@ import uuid
 import random
 import copy
 import gc
+from functools import partial
+import torchmetrics.functional as tf
 from copy import deepcopy
+import wandb
 
 import os
 from model import EMA
@@ -42,6 +45,8 @@ def run(args, device):
     if args.dataset == 'ogbn-products':
         graph, feats, labels, in_size, num_classes, \
         train_node_nums, valid_node_nums, test_node_nums, evaluator, = data
+        # TODO bring all evaluators from GraphSMOTE project.
+        evaluator = partial(tf.fbeta, num_classes=num_classes, beta=1., average="macro")
 
     for stage, epochs in enumerate(args.stages):
         if stage > 0 and args.use_rlu:
@@ -107,7 +112,7 @@ def run(args, device):
             model = gen_model_rlu(args, in_size, num_classes)
         elif args.method == "SAGN":
             print("SAGN")
-            label_in_feats = label_emb.shape[1] if label_emb is not None else n_classes
+            label_in_feats = label_emb.shape[1] if label_emb is not None else num_classes
             model = gen_model_sagn(args,in_size,label_in_feats, num_classes)
         model = model.to(device)
         
@@ -121,7 +126,7 @@ def run(args, device):
                 teacher_model = gen_model_rlu(args, in_size, num_classes)
             elif args.method == "SAGN":
                 print("teacher-SAGN")
-                label_in_feats = label_emb.shape[1] if label_emb is not None else n_classes
+                label_in_feats = label_emb.shape[1] if label_emb is not None else num_classes
                 teacher_model = gen_model_sagn(args,in_size,label_in_feats, num_classes)
             teacher_model = teacher_model.to(device)
             for param in teacher_model.parameters():
@@ -181,6 +186,8 @@ def run(args, device):
                         
                         acc = test_sagn(device,model, feats, label_emb, labels, loss_fcn, val_loader, all_loader, evaluator,
                                    train_nid, val_nid, test_nid, args,ema)
+                        # TODO fill every field like GraphSMOTE and WANDB init
+                        wandb.log({"f1" : acc})
                     end = time.time()
         
                     if acc[1] > best_val:
@@ -406,6 +413,7 @@ if __name__ == "__main__":
     parser.add_argument("--gap", type=int, default=20)
     
     parser.add_argument("--giant", action="store_true")
+    wandb.login()
 
     args = parser.parse_args()
     print(args)
