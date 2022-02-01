@@ -54,7 +54,7 @@ def run(args, device):
         graph, feats, labels, in_size, num_classes, \
         train_node_nums, valid_node_nums, test_node_nums, evaluator, = data
         # TODO bring all evaluators from GraphSMOTE project.
-        evaluator = partial(eval_methods(num_classes=num_classes))
+        evaluator = partial(eval_methods, num_classes=num_classes)
 
     for stage, epochs in enumerate(args.stages):
         if stage > 0 and args.use_rlu:
