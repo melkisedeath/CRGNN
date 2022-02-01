@@ -34,7 +34,15 @@ def get_n_params(model):
         pp += nn
     return pp
 
+def eval_methods(y_pred, y_true, num_classes):
+    fscore = tf.fbeta(y_pred, y_pred, num_classes=num_classes, beta=1., average="macro")
+    auroc = tf.auroc(y_pred, y_true, num_classes=num_classes, average="macro")
+    acc = (y_pred == y_true).float().sum() / len(y_pred)
+    return acc, auroc, fscore
+
 def run(args, device):
+    wandb.init(project="Bench-SMOTE", group="ogbn-products", job_type="CRGNN",
+               config=args)
     dirs = f"./output/{args.dataset}/"
     if not os.path.exists(dirs):
         os.makedirs(dirs)
@@ -46,7 +54,7 @@ def run(args, device):
         graph, feats, labels, in_size, num_classes, \
         train_node_nums, valid_node_nums, test_node_nums, evaluator, = data
         # TODO bring all evaluators from GraphSMOTE project.
-        evaluator = partial(tf.fbeta, num_classes=num_classes, beta=1., average="macro")
+        evaluator = partial(eval_methods(num_classes=num_classes))
 
     for stage, epochs in enumerate(args.stages):
         if stage > 0 and args.use_rlu:
@@ -184,10 +192,10 @@ def run(args, device):
                         val_nid = torch.arange(train_node_nums,train_node_nums+valid_node_nums)
                         test_nid = torch.arange(train_node_nums+valid_node_nums,train_node_nums+valid_node_nums+test_node_nums)
                         
-                        acc = test_sagn(device,model, feats, label_emb, labels, loss_fcn, val_loader, all_loader, evaluator,
+                        acc, auroc, fscore = test_sagn(device, model, feats, label_emb, labels, loss_fcn, val_loader, all_loader, evaluator,
                                    train_nid, val_nid, test_nid, args,ema)
                         # TODO fill every field like GraphSMOTE and WANDB init
-                        wandb.log({"f1" : acc})
+                        wandb.log({"val_acc_epoch" : acc, "val_auroc_epoch": auroc,"val_fscore_epoch" : fscore})
                     end = time.time()
         
                     if acc[1] > best_val:
@@ -328,7 +336,7 @@ if __name__ == "__main__":
                         help="dropout on activation")
     parser.add_argument("--gpu", type=int, default=0)
     parser.add_argument("--weight-decay", type=float, default=0)
-    parser.add_argument("--eval-every", type=int, default=10)
+    parser.add_argument("--eval-every", type=int, default=1)
     parser.add_argument("--batch_size", type=int, default=50000)
     parser.add_argument("--batch_size_first", type=int, default=50000)
     parser.add_argument("--n-layers-1", type=int, default=4,
@@ -337,7 +345,7 @@ if __name__ == "__main__":
                         help="number of feed-forward layers")
     parser.add_argument("--n-layers-3", type=int, default=4,
                         help="number of feed-forward layers")
-    parser.add_argument("--num-runs", type=int, default=10,
+    parser.add_argument("--num-runs", type=int, default=1,
                         help="number of times to repeat the experiment")
     parser.add_argument("--patience", type=int, default=100,
                         help="early stop of times of the experiment")
