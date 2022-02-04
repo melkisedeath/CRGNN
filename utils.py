@@ -159,6 +159,7 @@ def train(model, feats, labels, device, loss_fcn, optimizer, train_loader,label_
     iter_num=0
     y_true=[]
     y_pred=[]
+    logits=[]
     for batch in train_loader:
         batch_feats = [x[batch].to(device) for x in feats]
         if args.method == "SAGN":
@@ -167,6 +168,7 @@ def train(model, feats, labels, device, loss_fcn, optimizer, train_loader,label_
             output_att=model(batch_feats,label_emb[batch].to(device))
         y_true.append(labels[batch].to(torch.long))
         y_pred.append(output_att.argmax(dim=-1, keepdim=True).cpu())
+        logits.append(output_att.cpu())
         L1 = loss_fcn(output_att, labels[batch].to(device))
         loss_train = L1
         total_loss = loss_train
@@ -177,8 +179,9 @@ def train(model, feats, labels, device, loss_fcn, optimizer, train_loader,label_
             ema.update()
         iter_num+=1
     loss = total_loss / iter_num
-    acc = evaluator(torch.cat(y_true, dim=0),torch.cat(y_pred, dim=0))
-    return loss,acc
+    # print(torch.cat(y_true, dim=0).shape, torch.cat(y_pred, dim=0).shape)
+    acc = evaluator(torch.cat(y_true, dim=0).squeeze(),torch.cat(y_pred, dim=0).squeeze(), torch.cat(logits, dim=0).squeeze())
+    return loss, acc
 
 def train_mean_teacher(model,teacher_model,feats, labels, device, loss_fcn, optimizer, train_loader,enhance_loader,label_emb,evaluator,args,global_step,ema=None):
     model.train()
@@ -190,6 +193,7 @@ def train_mean_teacher(model,teacher_model,feats, labels, device, loss_fcn, opti
     iter_num=0
     y_true=[]
     y_pred=[]
+    logits = []
     for idx_1, idx_2 in zip(train_loader, enhance_loader):
         idx = torch.cat((idx_1, idx_2), dim=0)
         feat_list = [x[idx].to(device) for x in feats]
@@ -202,6 +206,7 @@ def train_mean_teacher(model,teacher_model,feats, labels, device, loss_fcn, opti
         
         y_true.append(labels[idx_1].to(torch.long))
         y_pred.append(output_att[:len(idx_1)].argmax(dim=-1, keepdim=True).cpu())
+        logits.append(output_att[:len(idx_1)].cpu())
         #L1 = loss_fcn(output_att[:len(idx_1)], labels[idx_1])*(len(idx_1)*1.0/(len(idx_1)+len(idx_2)))
         L1 = loss_fcn(output_att[:len(idx_1)], labels[idx_1].to(device))
         
@@ -246,7 +251,7 @@ def train_mean_teacher(model,teacher_model,feats, labels, device, loss_fcn, opti
     loss_cons = total_loss_consis / iter_num
     loss_kl = total_loss_kl / iter_num
     loss_sup = total_loss_supervised / iter_num
-    acc = evaluator(torch.cat(y_true, dim=0),torch.cat(y_pred, dim=0))
+    acc = evaluator(torch.cat(y_true, dim=0).squeeze(),torch.cat(y_pred, dim=0).squeeze(), torch.cat(logits, dim=0).squeeze())
     return loss,acc
 
 @torch.no_grad()
@@ -256,6 +261,7 @@ def test(model, feats, labels, device, test_loader, evaluator, label_emb,args,em
     model.eval()
     preds = []
     true=[]
+    logits = []
     for batch in test_loader:
         batch_feats = [feat[batch].to(device) for feat in feats]
         if args.method == "SAGN":
@@ -263,10 +269,12 @@ def test(model, feats, labels, device, test_loader, evaluator, label_emb,args,em
         else:
             output = model(batch_feats,label_emb[batch].to(device))
         preds.append(torch.argmax(output, dim=-1))
+        logits.append(output)
         true.append(labels[batch].to(device))
-    true=torch.cat(true)
-    preds = torch.cat(preds, dim=0)
-    res = evaluator(preds, true)
+    true=torch.cat(true).squeeze()
+    preds = torch.cat(preds, dim=0).squeeze()
+    logits = torch.cat(logits, dim=0).squeeze()
+    res = evaluator(preds, true, logits)
     if ema != None:
         ema.restore()
     return res

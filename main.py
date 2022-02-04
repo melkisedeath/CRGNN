@@ -34,9 +34,9 @@ def get_n_params(model):
         pp += nn
     return pp
 
-def eval_methods(y_pred, y_true, num_classes):
-    fscore = tf.fbeta(y_pred, y_pred, num_classes=num_classes, beta=1., average="macro")
-    auroc = tf.auroc(y_pred, y_true, num_classes=num_classes, average="macro")
+def eval_methods(y_pred, y_true, logits, num_classes):
+    fscore = tf.fbeta(y_true, y_pred, num_classes=num_classes, average="macro")
+    auroc = tf.auroc(logits, y_true, num_classes=num_classes, average="macro")
     acc = (y_pred == y_true).float().sum() / len(y_pred)
     return acc, auroc, fscore
 
@@ -192,25 +192,27 @@ def run(args, device):
                         val_nid = torch.arange(train_node_nums,train_node_nums+valid_node_nums)
                         test_nid = torch.arange(train_node_nums+valid_node_nums,train_node_nums+valid_node_nums+test_node_nums)
                         
-                        acc, auroc, fscore = test_sagn(device, model, feats, label_emb, labels, loss_fcn, val_loader, all_loader, evaluator,
+                        acc = test_sagn(device, model, feats, label_emb, labels, loss_fcn, val_loader, all_loader, evaluator,
                                    train_nid, val_nid, test_nid, args,ema)
                         # TODO fill every field like GraphSMOTE and WANDB init
-                        wandb.log({"val_acc_epoch" : acc, "val_auroc_epoch": auroc,"val_fscore_epoch" : fscore})
+                        print({"val_acc_epoch" : acc[1][0], "val_auroc_epoch": acc[1][1],"val_fscore_epoch" : acc[1][2]})
+                        wandb.log({"val_acc_epoch" : acc[1][0], "val_auroc_epoch": acc[1][1],"val_fscore_epoch" : acc[1][2]})
                     end = time.time()
         
                     if acc[1] > best_val:
                         best_epoch = epoch
-                        best_val = acc[1]
-                        best_test = acc[2]
-                        best_val_loss = acc[3]
+                        best_val = acc[1][0]
+                        best_test = acc[2][0]
+                        best_val_loss = acc[3][0]
                         best_model = deepcopy(model)
                         count = 0
                     else :
                         count += args.eval_every
                         if count >= args.patience:
                             break
-                    log = "Epoch {}, Time(s): {:.4f} {:.4f}, ".format(epoch, med - start, acc[-1])
-                    log += "Best Val loss: {:.4f}, Accs: Train: {:.4f}, Val: {:.4f}, Test: {:.4f}, Best Val: {:.4f}, Best Test: {:.4f}".format(best_val_loss, acc[0], acc[1], acc[2], best_val, best_test)
+                    log = "Epoch {}, Time(s): {:.4f} {:.4f}, ".format(epoch, med - start, acc[-1][0])
+
+                    log += "Best Val loss: {:.4f}, Accs: Train: {:.4f}, Val: {:.4f}, Test: {:.4f}, Best Val: {:.4f}, Best Test: {:.4f}".format(best_val_loss, acc[0][0], acc[1][0], acc[2][0], best_val, best_test)
                     print(log)
             preds = gen_output_torch(best_model, feats, all_loader, device, label_emb,args, ema)        
             torch.save(preds, checkpt_file + f'_{stage}_{args.method}.pt')
@@ -265,18 +267,19 @@ def run(args, device):
                 end = time.time()
     
                 log = "Epoch {}, Time(s): {:.4f}, Train loss: {:.4f}, Train acc: {:.4f} ".format(epoch, end - start, loss,
-                                                                                                acc * 100)
+                                                                                                acc[0] * 100)
                 if epoch % args.eval_every == 0 and epoch > args.train_num_epochs[stage]:
                     with torch.no_grad():
                         acc = test(model, feats, labels, device, val_loader, evaluator,
                                        label_emb,args, ema)
+                    wandb.log({"val_acc_epoch": acc[0], "val_auroc_epoch": acc[1], "val_fscore_epoch": acc[2]})
                     val_end = time.time()
     
                     log += "\nValidation: Time(s): {:.4f}, ".format(val_end - end)
-                    log += "Val {:.4f}, ".format(acc)
-                    if acc > best_val:
+                    log += "Val {:.4f}, ".format(acc[0])
+                    if acc[0] > best_val:
                         best_epoch = epoch
-                        best_val = acc
+                        best_val = acc[0]
                         best_model = copy.deepcopy(model)
     
                         best_test = test(model, feats, labels, device, test_loader, evaluator,
@@ -290,11 +293,11 @@ def run(args, device):
                         count = count + args.eval_every
                         if count >= args.patience:
                             break
-                    log += "Best Epoch {}, Val {:.4f}, Test {:.4f}".format(
-                        best_epoch, best_val, best_test)
-                print(log)    
-            print("Best Epoch {}, Val {:.4f}, Test {:.4f}".format(
-                best_epoch, best_val, best_test))
+                #     log += "Best Epoch {}, Val {:.4f}, Test {:.4f}".format(
+                #         best_epoch, best_val, best_test)
+                # print(log)
+            # print("Best Epoch {}, Val {:.4f}, Test {:.4f}".format(
+            #     best_epoch, best_val, best_test))
     return best_val, best_test
 
 def main(args):
@@ -310,15 +313,15 @@ def main(args):
         set_seed(args.seed+i)
         best_val, best_test = run(args, device)
         #np.save(f"output/{args.dataset}/output_{i}.npy", preds.numpy())
-        val_accs.append(best_val)
-        test_accs.append(best_test)
-
-    print(f"Average val accuracy: {np.mean(val_accs):.4f}, "
-          f"std: {np.std(val_accs):.4f}")
-    print(f"Average test accuracy: {np.mean(test_accs):.4f}, "
-          f"std: {np.std(test_accs):.4f}")
-
-    return np.mean(test_accs)
+    #     val_accs.append(best_val)
+    #     test_accs.append(best_test)
+    #
+    # print(f"Average val accuracy: {np.mean(val_accs):.4f}, "
+    #       f"std: {np.std(val_accs):.4f}")
+    # print(f"Average test accuracy: {np.mean(test_accs):.4f}, "
+    #       f"std: {np.std(test_accs):.4f}")
+    #
+    # return np.mean(test_accs)
 
 
 if __name__ == "__main__":
